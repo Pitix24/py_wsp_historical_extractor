@@ -1,220 +1,234 @@
 import sqlite3
-import json
+import pymysql  # pip install pymysql cryptography
+import hashlib
 import os
 import shutil
-import re
 from pathlib import Path
+from datetime import datetime, timezone
 from tqdm import tqdm
 
 # ═══════════════════════════════════════════════════════════════
 # CONFIGURACIÓN
 # ═══════════════════════════════════════════════════════════════
-MSGSTORE = "msgstore.db"
+MYSQL_CONFIG = {
+    "host": os.environ.get("DB_HOST", "localhost"),
+    "port": int(os.environ.get("DB_PORT", 3306)),
+    "user": os.environ.get("DB_USER", "whatsapp_user"),
+    "password": os.environ.get("DB_PASS"),
+    "database": "whatsapp_business",
+    "charset": "utf8mb4"
+}
+
+MSGSTORE = "msgstore.db"       # SQLite extraído de WhatsApp
 WA_DB = "wa.db"
 MEDIA_SRC = Path("./media")
-OUTPUT = Path("./output")
-OUTPUT.mkdir(exist_ok=True)
+ARCHIVOS_OUTPUT = Path("./archivos_procesados")
+ARCHIVOS_OUTPUT.mkdir(exist_ok=True)
+
+# ═══════════════════════════════════════════════════════════════
+# CONEXIONES
+# ═══════════════════════════════════════════════════════════════
+print("🔌 Conectando a MySQL/MariaDB...")
+mysql_conn = pymysql.connect(**MYSQL_CONFIG)
+mysql_cur = mysql_conn.cursor(pymysql.cursors.DictCursor)
+
+wa_sqlite = sqlite3.connect(WA_DB)
+wa_sqlite.row_factory = sqlite3.Row
+msg_sqlite = sqlite3.connect(MSGSTORE)
+msg_sqlite.row_factory = sqlite3.Row
 
 # ═══════════════════════════════════════════════════════════════
 # UTILIDADES
 # ═══════════════════════════════════════════════════════════════
-def sanitize(name: str, maxlen: int = 50) -> str:
-    """Limpia un nombre para usarlo como carpeta."""
-    if not name:
-        return "SinNombre"
-    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', name)
-    return cleaned.strip()[:maxlen] or "SinNombre"
+def ts_to_datetime(ts_ms):
+    if not ts_ms:
+        return None
+    return datetime.fromtimestamp(ts_ms/1000, tz=timezone.utc)
 
-def ts_to_iso(ts_ms: int) -> str:
-    """Convierte timestamp WhatsApp (ms) a ISO."""
-    from datetime import datetime, timezone
-    return datetime.fromtimestamp(ts_ms/1000, tz=timezone.utc).isoformat()
-
-# ═══════════════════════════════════════════════════════════════
-# 1. CARGAR CONTACTOS
-# ═══════════════════════════════════════════════════════════════
-print("📇 Cargando contactos desde wa.db...")
-contactos = {}
-with sqlite3.connect(WA_DB) as conn:
-    conn.row_factory = sqlite3.Row
-    for row in conn.execute("""
-        SELECT jid, display_name, wa_name, number, status 
-        FROM wa_contacts
-    """):
-        contactos[row["jid"]] = {
-            "nombre_guardado": row["display_name"],
-            "nombre_whatsapp": row["wa_name"],
-            "numero": row["number"] or row["jid"].split("@")[0],
-            "estado": row["status"]
-        }
-print(f"   ✅ {len(contactos)} contactos cargados")
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 # ═══════════════════════════════════════════════════════════════
-# 2. PROCESAR CHATS
+# 1. REGISTRAR INICIO DE EXTRACCIÓN (AUDITORÍA)
 # ═══════════════════════════════════════════════════════════════
-print("\n💬 Procesando mensajes...")
-conn = sqlite3.connect(MSGSTORE)
-conn.row_factory = sqlite3.Row
+mysql_cur.execute("""
+    INSERT INTO extracciones_log (usuario, tipo, inicio, estado)
+    VALUES (%s, %s, %s, %s)
+""", (os.environ.get("USER", "system"), "historico", datetime.now(), "exitoso"))
+extraccion_id = mysql_cur.lastrowid
+mysql_conn.commit()
 
-# Obtener todos los chats individuales (excluye grupos si no los necesitas)
-chats = conn.execute("""
-    SELECT c._id, c.jid_row_id, j.raw_string as jid
+# ═══════════════════════════════════════════════════════════════
+# 2. INSERTAR CONTACTOS (UPSERT)
+# ═══════════════════════════════════════════════════════════════
+print("📇 Importando contactos...")
+contactos_map = {}  # jid -> contacto_id
+
+for row in wa_sqlite.execute("""
+    SELECT jid, display_name, wa_name, number, status 
+    FROM wa_contacts 
+    WHERE jid LIKE '%@s.whatsapp.net'
+"""):
+    mysql_cur.execute("""
+        INSERT INTO contactos (jid, numero, nombre_guardado, nombre_whatsapp, estado)
+        VALUES (%s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            nombre_guardado = VALUES(nombre_guardado),
+            nombre_whatsapp = VALUES(nombre_whatsapp),
+            estado = VALUES(estado)
+    """, (
+        row["jid"],
+        row["number"] or row["jid"].split("@")[0],
+        row["display_name"],
+        row["wa_name"],
+        row["status"]
+    ))
+    mysql_cur.execute("SELECT id FROM contactos WHERE jid = %s", (row["jid"],))
+    contactos_map[row["jid"]] = mysql_cur.fetchone()["id"]
+
+mysql_conn.commit()
+print(f"   ✅ {len(contactos_map)} contactos importados")
+
+# ═══════════════════════════════════════════════════════════════
+# 3. PROCESAR MENSAJES EN BATCH (BULK INSERT)
+# ═══════════════════════════════════════════════════════════════
+print("💬 Importando mensajes...")
+
+chats = msg_sqlite.execute("""
+    SELECT c._id, j.raw_string as jid
     FROM chat c
     JOIN jid j ON c.jid_row_id = j._id
     WHERE j.raw_string LIKE '%@s.whatsapp.net'
 """).fetchall()
 
-print(f"   📊 Total de chats individuales: {len(chats)}")
+stats = {"mensajes": 0, "archivos": 0, "errores": 0}
 
-# Estadísticas globales
-stats = {
-    "chats_procesados": 0,
-    "mensajes_totales": 0,
-    "archivos_copiados": 0,
-    "archivos_faltantes": 0,
-    "errores": []
-}
-
-# ═══════════════════════════════════════════════════════════════
-# 3. ITERAR SOBRE CADA CHAT
-# ═══════════════════════════════════════════════════════════════
-for chat in tqdm(chats, desc="Procesando chats"):
+for chat in tqdm(chats, desc="Chats"):
     jid = chat["jid"]
     chat_id = chat["_id"]
+    contacto_id = contactos_map.get(jid)
     
-    contacto = contactos.get(jid, {
-        "nombre_guardado": None,
-        "nombre_whatsapp": None,
-        "numero": jid.split("@")[0],
-        "estado": None
-    })
+    if not contacto_id:
+        # Contacto no estaba en wa.db (número sin guardar), crearlo
+        numero = jid.split("@")[0]
+        mysql_cur.execute("""
+            INSERT IGNORE INTO contactos (jid, numero) VALUES (%s, %s)
+        """, (jid, numero))
+        mysql_cur.execute("SELECT id FROM contactos WHERE jid = %s", (jid,))
+        contacto_id = mysql_cur.fetchone()["id"]
+        contactos_map[jid] = contacto_id
     
-    nombre_mostrar = (contacto["nombre_guardado"] 
-                      or contacto["nombre_whatsapp"] 
-                      or contacto["numero"])
+    mensajes = msg_sqlite.execute("""
+        SELECT m._id, m.from_me, m.timestamp, m.text_data, m.message_type,
+               mm.file_path, mm.mime_type, mm.media_name, mm.file_size, mm.media_caption
+        FROM message m
+        LEFT JOIN message_media mm ON m._id = mm.message_row_id
+        WHERE m.chat_row_id = ?
+        ORDER BY m.timestamp ASC
+    """, (chat_id,)).fetchall()
     
-    # Carpeta destino: NumeroTelefono_NombreCliente
-    folder_name = f"{contacto['numero']}_{sanitize(nombre_mostrar)}"
-    chat_folder = OUTPUT / folder_name
-    media_folder = chat_folder / "archivos"
-    chat_folder.mkdir(exist_ok=True)
-    media_folder.mkdir(exist_ok=True)
-    
-    # Query completo de mensajes + media
-    try:
-        mensajes = conn.execute("""
-            SELECT 
-                m._id,
-                m.from_me,
-                m.timestamp,
-                m.text_data,
-                m.message_type,
-                mm.file_path,
-                mm.mime_type,
-                mm.media_name,
-                mm.file_size,
-                mm.media_caption
-            FROM message m
-            LEFT JOIN message_media mm ON m._id = mm.message_row_id
-            WHERE m.chat_row_id = ?
-            ORDER BY m.timestamp ASC
-        """, (chat_id,)).fetchall()
-    except sqlite3.OperationalError as e:
-        stats["errores"].append(f"{jid}: {e}")
-        continue
-    
-    conversacion = []
-    
-    for msg in mensajes:
-        item = {
-            "id": msg["_id"],
-            "de_mi": bool(msg["from_me"]),
-            "timestamp_ms": msg["timestamp"],
-            "fecha_iso": ts_to_iso(msg["timestamp"]) if msg["timestamp"] else None,
-            "tipo": msg["message_type"],
-            "texto": msg["text_data"] or "",
-            "caption": msg["media_caption"],
-            "archivo": None
-        }
+    # Bulk insert de mensajes
+    batch_mensajes = []
+    for m in mensajes:
+        tipo = "text"
+        if m["mime_type"]:
+            if "image" in m["mime_type"]: tipo = "image"
+            elif "video" in m["mime_type"]: tipo = "video"
+            elif "audio" in m["mime_type"]: tipo = "audio"
+            elif m["mime_type"]: tipo = "document"
         
-        # Copiar archivo multimedia al folder del cliente
-        if msg["file_path"]:
-            src_path = MEDIA_SRC / msg["file_path"].replace(
-                "Media/", "WhatsApp Business/Media/"
-            )
-            # Fallback: buscar solo por nombre de archivo
-            if not src_path.exists():
-                fname = os.path.basename(msg["file_path"])
-                matches = list(MEDIA_SRC.rglob(fname))
-                src_path = matches[0] if matches else None
+        wa_msg_id = f"{jid}_{m['_id']}"  # ID único compuesto
+        batch_mensajes.append((
+            wa_msg_id, contacto_id, bool(m["from_me"]), tipo,
+            m["text_data"] or "", m["media_caption"],
+            m["timestamp"], ts_to_datetime(m["timestamp"]),
+            bool(m["file_path"])
+        ))
+    
+    if batch_mensajes:
+        mysql_cur.executemany("""
+            INSERT IGNORE INTO mensajes 
+            (wa_id, contacto_id, from_me, tipo, contenido, caption, 
+             timestamp_ms, fecha, tiene_archivo)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """, batch_mensajes)
+        stats["mensajes"] += len(batch_mensajes)
+    
+    # Procesar archivos multimedia
+    for m in mensajes:
+        if not m["file_path"]:
+            continue
+        wa_msg_id = f"{jid}_{m['_id']}"
+        
+        # Buscar archivo físico
+        src_path = MEDIA_SRC / m["file_path"].replace("Media/", "WhatsApp Business/Media/")
+        if not src_path.exists():
+            matches = list(MEDIA_SRC.rglob(os.path.basename(m["file_path"])))
+            src_path = matches[0] if matches else None
+        
+        if src_path and src_path.exists():
+            # Copiar a estructura por contacto
+            dest_dir = ARCHIVOS_OUTPUT / str(contacto_id)
+            dest_dir.mkdir(exist_ok=True)
+            dest_path = dest_dir / src_path.name
+            if not dest_path.exists():
+                shutil.copy2(src_path, dest_path)
             
-            if src_path and src_path.exists():
-                dst_name = os.path.basename(str(src_path))
-                dst_path = media_folder / dst_name
-                if not dst_path.exists():
-                    shutil.copy2(src_path, dst_path)
-                item["archivo"] = {
-                    "nombre": dst_name,
-                    "mime": msg["mime_type"],
-                    "tamaño_bytes": msg["file_size"]
-                }
-                stats["archivos_copiados"] += 1
-            else:
-                item["archivo"] = {"faltante": True, "ruta_original": msg["file_path"]}
-                stats["archivos_faltantes"] += 1
-        
-        conversacion.append(item)
+            # Registrar en DB
+            mysql_cur.execute("SELECT id FROM mensajes WHERE wa_id = %s", (wa_msg_id,))
+            msg_row = mysql_cur.fetchone()
+            if msg_row:
+                mysql_cur.execute("""
+                    INSERT IGNORE INTO archivos 
+                    (mensaje_id, contacto_id, nombre_original, nombre_local,
+                     ruta_local, mime_type, tamano_bytes, hash_sha256)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                """, (
+                    msg_row["id"], contacto_id,
+                    m["media_name"] or src_path.name,
+                    dest_path.name, str(dest_path),
+                    m["mime_type"], m["file_size"],
+                    sha256_file(dest_path)
+                ))
+                stats["archivos"] += 1
     
-    # ═══ Guardar archivos de salida ═══
-    
-    # 1. JSON estructurado (para procesamiento)
-    with open(chat_folder / "conversacion.json", "w", encoding="utf-8") as f:
-        json.dump({
-            "contacto": contacto,
-            "jid": jid,
-            "total_mensajes": len(conversacion),
-            "primer_mensaje": conversacion[0]["fecha_iso"] if conversacion else None,
-            "ultimo_mensaje": conversacion[-1]["fecha_iso"] if conversacion else None,
-            "mensajes": conversacion
-        }, f, ensure_ascii=False, indent=2)
-    
-    # 2. TXT legible (para revisión humana rápida)
-    with open(chat_folder / "conversacion.txt", "w", encoding="utf-8") as f:
-        f.write(f"═══ {nombre_mostrar} ({contacto['numero']}) ═══\n")
-        f.write(f"Total mensajes: {len(conversacion)}\n\n")
-        for m in conversacion:
-            quien = "YO" if m["de_mi"] else nombre_mostrar
-            fecha = m["fecha_iso"] or "?"
-            f.write(f"[{fecha}] {quien}: {m['texto']}")
-            if m["archivo"] and not m["archivo"].get("faltante"):
-                f.write(f"  📎 {m['archivo']['nombre']}")
-            f.write("\n")
-    
-    stats["chats_procesados"] += 1
-    stats["mensajes_totales"] += len(conversacion)
-
-conn.close()
+    mysql_conn.commit()  # Commit por chat para no perder progreso
 
 # ═══════════════════════════════════════════════════════════════
-# 4. REPORTE FINAL
+# 4. ACTUALIZAR ESTADÍSTICAS POR CONTACTO
 # ═══════════════════════════════════════════════════════════════
-reporte = {
-    "fecha_extraccion": "2026-05-08",
-    **stats
-}
-with open(OUTPUT / "_REPORTE.json", "w", encoding="utf-8") as f:
-    json.dump(reporte, f, ensure_ascii=False, indent=2)
+print("📊 Calculando estadísticas...")
+mysql_cur.execute("""
+    UPDATE contactos c
+    SET 
+        total_mensajes = (SELECT COUNT(*) FROM mensajes WHERE contacto_id = c.id),
+        fecha_primer_mensaje = (SELECT MIN(fecha) FROM mensajes WHERE contacto_id = c.id),
+        fecha_ultimo_mensaje = (SELECT MAX(fecha) FROM mensajes WHERE contacto_id = c.id)
+""")
+
+# Cerrar log de auditoría
+mysql_cur.execute("""
+    UPDATE extracciones_log 
+    SET fin = %s, chats_procesados = %s, mensajes_total = %s, archivos_total = %s
+    WHERE id = %s
+""", (datetime.now(), len(chats), stats["mensajes"], stats["archivos"], extraccion_id))
+
+mysql_conn.commit()
+mysql_conn.close()
 
 print(f"""
 ╔══════════════════════════════════════════════════════╗
 ║  ✅ PROCESAMIENTO COMPLETO                           ║
 ╠══════════════════════════════════════════════════════╣
-║  Chats procesados:    {stats['chats_procesados']:>10}                  ║
-║  Mensajes totales:    {stats['mensajes_totales']:>10}                  ║
-║  Archivos copiados:   {stats['archivos_copiados']:>10}                  ║
-║  Archivos faltantes:  {stats['archivos_faltantes']:>10}                  ║
-║  Errores:             {len(stats['errores']):>10}                  ║
+║  Chats procesados:    {len(chats):>10}                  ║
+║  Mensajes totales:    {stats['mensajes']:>10}                  ║
+║  Archivos copiados:   {stats['archivos']:>10}                  ║
+║  Errores:             {stats['errores']:>10}                  ║
 ╚══════════════════════════════════════════════════════╝
 
-📂 Resultado en: {OUTPUT.absolute()}
+📂 Resultado en: {ARCHIVOS_OUTPUT}
 """)
