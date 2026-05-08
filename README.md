@@ -89,7 +89,7 @@ Diseñado para escalar a **+2,000 clientes** sin intervención manual.
 ### Cuentas
 - Google Drive (se recomienda Google Workspace Pro / Enterprise)
 - Base de datos MySQL/MariaDB/SQL Server con permisos de escritura
-
+---
 ## 🚀 Instalación
 
 ### 1. Clonar el repositorio
@@ -116,7 +116,7 @@ sqlcmd -S localhost -U sa -i sql/schema_sqlserver.sql
 
 ### 5. Sincronización Google Drive
 - Seguir las instrucciones de `docs/DRIVE_SETUP.md`
-
+---
 ## 📱 Uso
 
 ### Modo DEMO (con WhatsApp Personal)
