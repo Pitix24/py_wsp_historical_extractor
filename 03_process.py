@@ -8,6 +8,28 @@ from datetime import datetime, timezone
 from tqdm import tqdm
 
 # ═══════════════════════════════════════════════════════════════
+# DETECCIÓN DE MODO (PRODUCCIÓN VS DEMO)
+# ═══════════════════════════════════════════════════════════════
+# Si existe el archivo "demo_extract.sh", estamos en modo DEMO
+# Si no, en modo PRODUCCIÓN
+
+DEMO_MODE = os.environ.get("DEMO_MODE", "false").lower() == "true"
+
+if DEMO_MODE:
+    print("🧪 MODO DEMO: Usando WhatsApp Personal")
+    PACKAGE = "com.whatsapp"
+    APP_FOLDER = "WhatsApp"
+    DB_NAME = "whatsapp_business_demo"  # DB separada para no mezclar
+else:
+    print("🏢 MODO PRODUCCIÓN: Usando WhatsApp Business")
+    PACKAGE = "com.whatsapp.w4b"
+    APP_FOLDER = "WhatsApp Business"
+    DB_NAME = "whatsapp_business"
+
+MEDIA_PATH = f"/sdcard/Android/media/{PACKAGE}/{APP_FOLDER}/Media/"
+DB_PATH = f"/sdcard/Android/media/{PACKAGE}/{APP_FOLDER}/Databases/"
+
+# ═══════════════════════════════════════════════════════════════
 # CONFIGURACIÓN
 # ═══════════════════════════════════════════════════════════════
 MYSQL_CONFIG = {
