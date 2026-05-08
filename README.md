@@ -94,18 +94,27 @@ Diseñado para escalar a **+2,000 clientes** sin intervención manual.
 
 ## 🚀 Instalación
 
-```bash
 # 1. Clonar el repositorio
+```bash
 git clone https://github.com/tu-org/whatsapp-business-extractor.git
 cd whatsapp-business-extractor
+```
 # 2. Ejecutar el instalador
+```bash
 chmod +x setup.sh ./setup.sh
+```
 # 3. Copiar y configurar variables de entorno
+```bash
 cp .env.example .env nano .env # Editar con tus credenciales
+```
 # 4. Crear schema en tu BD
+```bash
 mysql -u root -p < sql/schema_mysql.sql
+```
 # o para SQL Server:
+```bash
 sqlcmd -S localhost -U sa -i sql/schema_sqlserver.sql
+```
 ---
 
 ## 📱 Uso
@@ -120,7 +129,7 @@ export DEMO_MODE=true
 python scripts/02_decrypt.py
 python scripts/03_process_mysql.py
 ./scripts/04_upload_drive.sh
-```bash
+```
 ### Ver guía completa en docs/DEMO_GUIDE.md.
 ## Modo Producción (WhatsApp Business)
 
@@ -131,6 +140,6 @@ python scripts/02_decrypt.py
 python scripts/03_process_mysql.py
 ./scripts/04_upload_drive.sh
 python scripts/05_verify.py
-```bash
+```
 
 ### Ver guía completa en docs/PRODUCTION_GUIDE.md.
