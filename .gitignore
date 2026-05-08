@@ -36,3 +36,12 @@ env/
 
 # rclone
 rclone.conf
+client_secret_*.json
+credentials.json
+*.log
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+workdir
+output
