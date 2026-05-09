@@ -181,7 +181,8 @@ if wa_conn:
         
         cur.execute(f"SELECT id FROM contactos WHERE jid = {db.ph}", (row["jid"],))
         result = cur.fetchone()
-        contactos_map[row["jid"]] = result["id"] if isinstance(result, dict) else result[0]
+        cid = result["id"] if isinstance(result, dict) else result[0]
+        contactos_map[row["jid"]] = {"id": cid, "nombre": row["display_name"] or row["wa_name"], "numero": numero}
     
     db.commit()
 
@@ -215,9 +216,11 @@ for chat in tqdm(chats, desc="Chats", unit="chat"):
             )
             cur.execute(f"SELECT id FROM contactos WHERE jid = {db.ph}", (jid,))
             r = cur.fetchone()
-            contactos_map[jid] = r["id"] if isinstance(r, dict) else r[0]
+            cid = r["id"] if isinstance(r, dict) else r[0]
+            contactos_map[jid] = {"id": cid, "nombre": None, "numero": numero}
         
-        contacto_id = contactos_map[jid]
+        contacto_info = contactos_map[jid]
+        contacto_id = contacto_info["id"]
         
         # Query mensajes + media
         mensajes = msg_conn.execute("""
@@ -229,17 +232,44 @@ for chat in tqdm(chats, desc="Chats", unit="chat"):
             ORDER BY m.timestamp ASC
         """, (chat_id,)).fetchall()
         
-        # ─── Insertar mensajes ───
+        # ─── Insertar mensajes y Exportar a TXT ───
         batch = []
+        import re
+        nombre_carpeta = contacto_info["nombre"] or contacto_info["numero"]
+        nombre_carpeta = re.sub(r'[\\/*?:"<>|]', "", str(nombre_carpeta)).strip()
+        dest_dir = MEDIA_OUTPUT / nombre_carpeta
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        
+        chat_txt_path = dest_dir / "_chat.txt"
+        chat_lines = []
+
         for m in mensajes:
             tipo = detect_tipo(m["mime_type"], m["message_type"])
             wa_msg_id = f"{jid}_{m['_id']}"
+            dt = ts_to_datetime(m["timestamp"])
+            
+            # Formato de exportación estilo WhatsApp
+            dt_str = dt.strftime("%d/%m/%Y %H:%M") if dt else "Fecha desconocida"
+            emisor = "Tú" if m["from_me"] else (contacto_info["nombre"] or contacto_info["numero"])
+            texto_msg = m["text_data"] or ""
+            if m["file_path"]:
+                fname = os.path.basename(m["file_path"])
+                adjunto = f"<Adjunto: {fname}>"
+                texto_msg = f"{adjunto} {m['media_caption']}" if m["media_caption"] else adjunto
+            # Reemplazar saltos de línea literales para mantener el log ordenado
+            texto_msg = texto_msg.replace("\n", " ")
+            chat_lines.append(f"[{dt_str}] {emisor}: {texto_msg}")
+            
             batch.append((
                 wa_msg_id, contacto_id, bool(m["from_me"]), tipo,
                 m["text_data"] or "", m["media_caption"],
-                m["timestamp"], ts_to_datetime(m["timestamp"]),
+                m["timestamp"], dt,
                 bool(m["file_path"])
             ))
+            
+        if chat_lines:
+            with open(chat_txt_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(chat_lines))
         
         if batch:
             query = f"""
@@ -271,8 +301,6 @@ for chat in tqdm(chats, desc="Chats", unit="chat"):
                 src_path = matches[0] if matches else None
             
             if src_path and src_path.exists():
-                dest_dir = MEDIA_OUTPUT / str(contacto_id)
-                dest_dir.mkdir(parents=True, exist_ok=True)
                 dest_path = dest_dir / src_path.name
                 
                 if not dest_path.exists():
