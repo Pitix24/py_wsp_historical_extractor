@@ -6,6 +6,7 @@ auth_data/
 credentials.json
 
 # Datos extraídos (NUNCA subir a Git)
+Lista Claves y Equipos.md
 workdir/
 archivos_procesados/
 media/

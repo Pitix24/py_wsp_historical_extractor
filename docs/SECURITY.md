@@ -24,7 +24,7 @@
 - [x] Disco local cifrado
 - [x] `.env` excluido de Git (verificar .gitignore)
 - [x] Conexión DB sobre TLS
-- [ ] Acceso a Drive por cuenta dedicada de servicio
+- [x] Acceso a Drive por cuenta dedicada de servicio
 - [ ] Logs de acceso centralizados
 - [ ] Revisión trimestral de permisos
 - [ ] Política de retención definida

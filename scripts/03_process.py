@@ -19,7 +19,7 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config.config import (
     DB_ENGINE, DB_CONFIG, WORK_DIR, MEDIA_OUTPUT, AUDIT_USER,
-    DEMO_MODE, APP_FOLDER, print_mode
+    DEMO_MODE, APP_FOLDER, EXTRACT_STICKERS, print_mode
 )
 
 print_mode()
@@ -301,6 +301,10 @@ for chat in tqdm(chats, desc="Chats", unit="chat"):
                 src_path = matches[0] if matches else None
             
             if src_path and src_path.exists():
+                tipo_media = detect_tipo(m["mime_type"], m["message_type"])
+                if tipo_media == "sticker" and not EXTRACT_STICKERS:
+                    continue
+                
                 dest_path = dest_dir / src_path.name
                 
                 if not dest_path.exists():

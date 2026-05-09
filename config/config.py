@@ -65,6 +65,11 @@ RCLONE_CRYPT_REMOTE = os.environ.get("RCLONE_CRYPT_REMOTE", "gdrive-crypt")
 DRIVE_BASE_PATH = os.environ.get("DRIVE_BASE_PATH", "WhatsApp_Business_Backup")
 
 # ═══════════════════════════════════════════════════════════════
+# PREFERENCIAS DE EXTRACCIÓN
+# ═══════════════════════════════════════════════════════════════
+EXTRACT_STICKERS = os.environ.get("EXTRACT_STICKERS", "false").lower() == "true"
+
+# ═══════════════════════════════════════════════════════════════
 # AUDITORÍA
 # ═══════════════════════════════════════════════════════════════
 AUDIT_USER = os.environ.get("AUDIT_USER", os.environ.get("USER", "unknown"))
