@@ -186,7 +186,32 @@ if wa_conn:
     
     db.commit()
 
-print(f"   ✅ {len(contactos_map)} contactos importados")
+print(f"   ✅ {len(contactos_map)} contactos importados desde wa.db")
+
+# ─── Procesar VCF (si existe) ───
+vcf_files = list((workdir / "dbs").glob("*.vcf"))
+vcf_contacts = {}
+if vcf_files:
+    import re
+    print(f"📇 Procesando archivo VCF: {vcf_files[0].name}")
+    try:
+        with open(vcf_files[0], "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.readlines()
+            current_name = None
+            for line in lines:
+                line = line.strip()
+                if line.startswith("FN:"):
+                    current_name = line[3:]
+                elif line.startswith("TEL"):
+                    # Extraer solo los números
+                    tel = re.sub(r'\D', '', line.split(":", 1)[-1])
+                    if tel and current_name:
+                        if tel.startswith("00"): tel = tel[2:]
+                        # WhatsApp Peruano: 519...
+                        if len(tel) == 9 and tel.startswith("9"): tel = "51" + tel
+                        vcf_contacts[tel] = current_name
+    except Exception as e:
+        print(f"⚠️  Error procesando VCF: {e}")
 
 # ═══════════════════════════════════════════════════════════════
 # 3. PROCESAR MENSAJES
@@ -210,14 +235,25 @@ for chat in tqdm(chats, desc="Chats", unit="chat"):
         # Asegurar que existe el contacto
         if jid not in contactos_map:
             numero = jid.split("@")[0]
+            nombre_vcf = vcf_contacts.get(numero)
+            
             cur.execute(
-                f"{db.insert_ignore} INTO contactos (jid, numero) VALUES ({db.ph}, {db.ph})",
-                (jid, numero)
+                f"{db.insert_ignore} INTO contactos (jid, numero, nombre_guardado) VALUES ({db.ph}, {db.ph}, {db.ph})",
+                (jid, numero, nombre_vcf)
             )
-            cur.execute(f"SELECT id FROM contactos WHERE jid = {db.ph}", (jid,))
+            
+            # Actualizar si tenemos nombre nuevo del VCF y la DB lo tiene en NULL
+            if nombre_vcf:
+                cur.execute(f"UPDATE contactos SET nombre_guardado = {db.ph} WHERE jid = {db.ph} AND nombre_guardado IS NULL", (nombre_vcf, jid))
+            
+            cur.execute(f"SELECT id, nombre_guardado, nombre_whatsapp FROM contactos WHERE jid = {db.ph}", (jid,))
             r = cur.fetchone()
+            
             cid = r["id"] if isinstance(r, dict) else r[0]
-            contactos_map[jid] = {"id": cid, "nombre": None, "numero": numero}
+            db_nombre = r["nombre_guardado"] if isinstance(r, dict) else r[1]
+            db_wa_name = r["nombre_whatsapp"] if isinstance(r, dict) else r[2]
+            
+            contactos_map[jid] = {"id": cid, "nombre": db_nombre or db_wa_name, "numero": numero}
         
         contacto_info = contactos_map[jid]
         contacto_id = contacto_info["id"]

@@ -42,6 +42,24 @@ adb pull "/sdcard/Android/media/${PACKAGE}/${APP_FOLDER}/Databases/" "$WORKDIR/d
     exit 1
 }
 
+# ─── Extraer Contactos VCF (si existe) ───────────────────────
+echo ""
+echo "📇 Buscando archivo de Contactos exportado (.vcf)..."
+VCF_PATHS=("/sdcard/Contactos.vcf" "/sdcard/Contacts.vcf" "/sdcard/Download/Contactos.vcf" "/sdcard/Download/Contacts.vcf" "/sdcard/contactos.vcf")
+VCF_FOUND=false
+for path in "${VCF_PATHS[@]}"; do
+    # Validar si el archivo existe en el dispositivo
+    if adb shell "ls $path" 2>/dev/null | grep -q "\.vcf"; then
+        echo "   Encontrado: $path"
+        adb pull "$path" "$WORKDIR/dbs/" || true
+        VCF_FOUND=true
+    fi
+done
+
+if [ "$VCF_FOUND" = false ]; then
+    echo "⚠️  No se encontró ningún archivo .vcf. Solo se extraerán números sin nombres."
+fi
+
 # ─── Extraer multimedia ──────────────────────────────────────
 echo ""
 echo "🖼️  Extrayendo multimedia (esto puede tardar varios minutos)..."

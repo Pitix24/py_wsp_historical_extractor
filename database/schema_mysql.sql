@@ -2,22 +2,17 @@
 -- Schema para MySQL 8.0+ / MariaDB 10.6+
 -- ═══════════════════════════════════════════════════════════════
 
-CREATE DATABASE IF NOT EXISTS whatsapp_business 
-    CHARACTER SET utf8mb4 
-    COLLATE utf8mb4_unicode_ci;
-
-CREATE DATABASE IF NOT EXISTS whatsapp_business_demo
+CREATE DATABASE IF NOT EXISTS whatsapp_business_gestor01
     CHARACTER SET utf8mb4 
     COLLATE utf8mb4_unicode_ci;
 
 -- Usuario dedicado (cambia la contraseña)
 CREATE USER IF NOT EXISTS 'whatsapp_user'@'%' IDENTIFIED BY 'CHANGE_ME_STRONG_PASSWORD';
-GRANT ALL PRIVILEGES ON whatsapp_business.* TO 'whatsapp_user'@'%';
-GRANT ALL PRIVILEGES ON whatsapp_business_demo.* TO 'whatsapp_user'@'%';
+GRANT ALL PRIVILEGES ON whatsapp_business_gestor01.* TO 'whatsapp_user'@'%';
 FLUSH PRIVILEGES;
 
 -- ─── Seleccionar BD ──────────────────────────────────────────
-USE whatsapp_business;
+USE whatsapp_business_gestor01;
 
 -- ─── Tabla: contactos ────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS contactos (
@@ -112,6 +107,6 @@ LEFT JOIN archivos a ON c.id = a.contacto_id
 GROUP BY c.id;
 
 -- Aplicar el mismo schema a la BD DEMO
-USE whatsapp_business_demo;
+-- USE whatsapp_business_demo;
 -- (Ejecuta manualmente los CREATE TABLE anteriores en esta BD también, 
 -- o usa un script que itere sobre ambas bases)
