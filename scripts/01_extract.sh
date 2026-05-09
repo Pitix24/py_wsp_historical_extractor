@@ -4,6 +4,9 @@
 # ═══════════════════════════════════════════════════════════════
 set -e
 
+# Prevenir que Git Bash (Windows) corrompa las rutas de Android convirtiéndolas a C:/Program Files/Git/...
+export MSYS_NO_PATHCONV=1
+
 # Cargar variables de entorno
 export $(grep -v '^#' .env | xargs)
 

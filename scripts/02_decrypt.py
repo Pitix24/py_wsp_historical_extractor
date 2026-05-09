@@ -52,7 +52,7 @@ print(f"🔓 Desencriptando: {latest_msgstore.name}")
 # ─── Desencriptar msgstore.db ────────────────────────────────
 output_msgstore = workdir / "msgstore.db"
 result = subprocess.run(
-    ["wadecrypt", str(latest_msgstore), str(output_msgstore), "--key", WA_KEY],
+    ["wadecrypt", WA_KEY, str(latest_msgstore), str(output_msgstore)],
     capture_output=True,
     text=True
 )
@@ -70,7 +70,7 @@ wa_output = workdir / "wa.db"
 for wa in wa_files:
     if wa.name.endswith(".crypt15"):
         subprocess.run(
-            ["wadecrypt", str(wa), str(wa_output), "--key", WA_KEY],
+            ["wadecrypt", WA_KEY, str(wa), str(wa_output)],
             check=True
         )
         break
