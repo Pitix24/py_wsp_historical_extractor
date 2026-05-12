@@ -36,8 +36,9 @@ if not WA_KEY or len(WA_KEY) != 64:
 
 # ─── Localizar archivos cifrados ─────────────────────────────
 dbs_dir = workdir / "dbs"
+crypt_files = [p for p in dbs_dir.rglob("msgstore*.crypt15") if "-increment-" not in p.name]
 crypt_files = sorted(
-    dbs_dir.rglob("msgstore*.crypt15"),
+    crypt_files,
     key=lambda p: p.stat().st_mtime,
     reverse=True
 )
