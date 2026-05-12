@@ -11,6 +11,7 @@ workdir/
 archivos_procesados/
 media/
 output/
+True/
 *.db
 *.db-journal
 *.sqlite
