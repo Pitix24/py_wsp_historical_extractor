@@ -1,13 +1,9 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# 01 - Extracción de DBs y Media desde el dispositivo Android
+# 01 - Extracción de DBs y Media (con manejo robusto de nombres)
 # ═══════════════════════════════════════════════════════════════
 set -e
 
-# Prevenir que Git Bash (Windows) corrompa las rutas de Android convirtiéndolas a C:/Program Files/Git/...
-export MSYS_NO_PATHCONV=1
-
-# Cargar variables de entorno
 export $(grep -v '^#' .env | xargs)
 
 # Determinar paths según modo
@@ -37,35 +33,72 @@ adb devices
 # ─── Extraer bases de datos ──────────────────────────────────
 echo ""
 echo "📦 Extrayendo bases de datos cifradas..."
-adb pull "/sdcard/Android/media/${PACKAGE}/${APP_FOLDER}/Databases/" "$WORKDIR/dbs/" || {
-    echo "❌ Error al extraer databases. Verifica que WhatsApp tenga backup activo."
+DB_REMOTE_PATH="/sdcard/Android/media/$PACKAGE/$APP_FOLDER/Databases"
+adb pull "$DB_REMOTE_PATH/" "$WORKDIR/dbs/" || {
+    echo "❌ Error al extraer databases."
     exit 1
 }
 
-# ─── Extraer Contactos VCF (si existe) ───────────────────────
+# ─── Buscar VCF de Contactos ─────────────────────────────────
 echo ""
 echo "📇 Buscando archivo de Contactos exportado (.vcf)..."
-VCF_PATHS=("/sdcard/Contactos.vcf" "/sdcard/Contacts.vcf" "/sdcard/Download/Contactos.vcf" "/sdcard/Download/Contacts.vcf" "/sdcard/contactos.vcf")
-VCF_FOUND=false
-for path in "${VCF_PATHS[@]}"; do
-    # Validar si el archivo existe en el dispositivo
-    if adb shell "ls $path" 2>/dev/null | grep -q "\.vcf"; then
-        echo "   Encontrado: $path"
-        adb pull "$path" "$WORKDIR/dbs/" || true
-        VCF_FOUND=true
-    fi
-done
-
-if [ "$VCF_FOUND" = false ]; then
-    echo "⚠️  No se encontró ningún archivo .vcf. Solo se extraerán números sin nombres."
+VCF_PATH=$(adb shell "find /sdcard/Download/ -iname '*.vcf' 2>/dev/null | head -n1" | tr -d '\r')
+if [ -n "$VCF_PATH" ]; then
+    echo "   Encontrado: $VCF_PATH"
+    adb pull "$VCF_PATH" "$WORKDIR/contactos.vcf"
+else
+    echo "   ⚠️  No se encontró archivo .vcf"
 fi
 
-# ─── Extraer multimedia ──────────────────────────────────────
+# ─── ✨ NUEVO: Extraer multimedia vía TAR (robusto) ───────────
 echo ""
-echo "🖼️  Extrayendo multimedia (esto puede tardar varios minutos)..."
-adb pull "/sdcard/Android/media/${PACKAGE}/${APP_FOLDER}/Media/" "$WORKDIR/media/" || {
-    echo "⚠️  Advertencia: algunos archivos de media no se pudieron extraer"
+echo "🖼️  Extrayendo multimedia via TAR (método robusto)..."
+echo "   Esto evita problemas con nombres raros, emojis y caracteres especiales."
+echo ""
+
+MEDIA_REMOTE_PATH="/sdcard/Android/media/$PACKAGE/$APP_FOLDER/Media"
+MEDIA_TAR="$WORKDIR/media.tar"
+
+# Empaquetar en el dispositivo y transferir como stream
+# exec-out evita que adb interprete el output
+adb exec-out "tar -cf - -C '/sdcard/Android/media/$PACKAGE/$APP_FOLDER/' Media 2>/dev/null" > "$MEDIA_TAR" || {
+    echo "⚠️  tar retornó error, pero continuamos (puede tener archivos con errores)"
 }
+
+# Verificar que el tar tiene contenido
+TAR_SIZE=$(stat -c%s "$MEDIA_TAR" 2>/dev/null || stat -f%z "$MEDIA_TAR")
+if [ "$TAR_SIZE" -lt 1024 ]; then
+    echo "❌ El archivo tar está vacío o casi vacío ($TAR_SIZE bytes)."
+    echo "   Probando método alternativo..."
+    rm -f "$MEDIA_TAR"
+    
+    # Fallback: usar find + pull individual con sanitización
+    bash scripts/01b_extract_media_fallback.sh "$WORKDIR"
+else
+    echo "   ✅ TAR creado: $(du -h "$MEDIA_TAR" | cut -f1)"
+    
+    # Extraer localmente con manejo de errores por archivo
+    echo ""
+    echo "📂 Extrayendo TAR localmente..."
+    cd "$WORKDIR"
+    
+    # --ignore-failed-read: no abortar si un archivo falla
+    # --transform: sanitiza nombres con backslash
+    tar -xf media.tar \
+        --ignore-failed-read \
+        2>> "$WORKDIR/tar_errors.log" || {
+        echo "   ⚠️  Algunos archivos no pudieron extraerse (ver tar_errors.log)"
+    }
+    
+    # Eliminar el tar para liberar espacio
+    rm -f media.tar
+    cd - > /dev/null
+fi
+
+# ─── Sanitizar nombres problemáticos (post-proceso) ──────────
+echo ""
+echo "🧹 Sanitizando nombres de archivos problemáticos..."
+python3 scripts/sanitize_filenames.py "$WORKDIR/media"
 
 # ─── Resumen ─────────────────────────────────────────────────
 DB_COUNT=$(find "$WORKDIR/dbs" -type f 2>/dev/null | wc -l)
@@ -82,7 +115,6 @@ printf "║  Archivos media:  %-40s║\n" "$MEDIA_COUNT"
 printf "║  Tamaño media:    %-40s║\n" "$MEDIA_SIZE"
 echo "╚═══════════════════════════════════════════════════════════╝"
 
-# Guardar path para el siguiente script
 echo "$WORKDIR" > .last_extraction
 echo ""
 echo "➡️  Siguiente paso: python scripts/02_decrypt.py"
