@@ -190,6 +190,8 @@ print(f"   ✅ {len(contactos_map)} contactos importados desde wa.db")
 
 # ─── Procesar VCF (si existe) ───
 vcf_files = list((workdir / "dbs").glob("*.vcf"))
+if not vcf_files:
+    vcf_files = list(workdir.glob("*.vcf"))
 vcf_contacts = {}
 if vcf_files:
     import re

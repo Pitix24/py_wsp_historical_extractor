@@ -47,9 +47,9 @@ nano .env
 ```
 Pipeline completo
 ```
-./scripts/01_extract.sh # ~10-20 min 
+./scripts/01_extract.ps1 # ~10-20 min 
 python scripts/02_decrypt.py # ~1 min 
-python scripts/03_process_mysql.py # ~30-60 min para 2k chats 
+python scripts/03_process.py # ~30-60 min para 2k chats 
 ./scripts/04_upload_drive.sh # ~4-12 hrs según volumen 
 python scripts/05_verify.py # ~2 min
 ```

@@ -25,7 +25,10 @@ if ($DEMO_MODE) {
 }
 
 $TIMESTAMP = Get-Date -Format "yyyyMMdd_HHmmss"
-$WORK_DIR = [Environment]::GetEnvironmentVariable("WORK_DIR", "Process") -or "./workdir"
+$WORK_DIR = [Environment]::GetEnvironmentVariable("WORK_DIR", "Process")
+if ([string]::IsNullOrWhiteSpace($WORK_DIR)) {
+    $WORK_DIR = "./workdir"
+}
 $WORKDIR = Join-Path $WORK_DIR "extraction_$TIMESTAMP"
 
 # Crear directorios
@@ -66,7 +69,7 @@ try {
     
     if ($VCF_PATH) {
         Write-Host "   Encontrado: $VCF_PATH"
-        adb pull "$VCF_PATH" "$WORKDIR/contactos.vcf" 2>&1 | Out-Null
+        adb pull "$VCF_PATH" "$WORKDIR/dbs/contactos.vcf" 2>&1 | Out-Null
     } else {
         Write-Host "   ⚠️  No se encontró archivo .vcf"
     }
