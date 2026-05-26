@@ -96,7 +96,7 @@ def detect_tipo(mime_type, message_type):
 # ═══════════════════════════════════════════════════════════════
 # LOCALIZAR ÚLTIMA EXTRACCIÓN
 # ═══════════════════════════════════════════════════════════════
-last_extraction_file = Path(".last_extraction")
+last_extraction_file = WORK_DIR / ".last_extraction"
 if last_extraction_file.exists():
     workdir = Path(last_extraction_file.read_text().strip())
 else:

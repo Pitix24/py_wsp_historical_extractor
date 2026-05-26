@@ -9,9 +9,7 @@ credentials.json
 # Datos extraídos (NUNCA subir a Git)
 Lista Claves y Equipos.md
 workdir/
-workdir_05/
 archivos_procesados/
-archivos_procesados_05/
 media/
 output/
 True/

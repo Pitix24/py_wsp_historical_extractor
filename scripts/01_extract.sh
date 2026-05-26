@@ -115,6 +115,7 @@ printf "║  Archivos media:  %-40s║\n" "$MEDIA_COUNT"
 printf "║  Tamaño media:    %-40s║\n" "$MEDIA_SIZE"
 echo "╚═══════════════════════════════════════════════════════════╝"
 
-echo "$WORKDIR" > .last_extraction
+mkdir -p "${WORK_DIR:-./workdir}"
+echo "$WORKDIR" > "${WORK_DIR}/.last_extraction"
 echo ""
 echo "➡️  Siguiente paso: python scripts/02_decrypt.py"

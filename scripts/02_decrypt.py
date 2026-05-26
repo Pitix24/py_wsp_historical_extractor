@@ -15,7 +15,7 @@ from config.config import WA_KEY, WORK_DIR, print_mode
 print_mode()
 
 # ─── Localizar última extracción ─────────────────────────────
-last_extraction_file = Path(".last_extraction")
+last_extraction_file = WORK_DIR / ".last_extraction"
 if last_extraction_file.exists():
     workdir = Path(last_extraction_file.read_text().strip())
 else:
